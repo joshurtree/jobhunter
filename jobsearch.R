@@ -40,26 +40,30 @@ createSaveLinks <- function(url) {
   HTML(paste0(createJobLink(url, TRUE), createJobLink(url, FALSE)))
 }
 
+base.dir <- "~/.jobhunter/"
+if (!dir.exists(base.dir)) dir.create(base.dir)
+weightings.path <- paste0(base.dir, "weightings.csv")
+listings.path <- paste0(base.dir, "listings.csv")
+
 # Load information on engines, weights and job listings
 loadJobData <- function() {
-  weights <- if (file.exists("data/weightings.csv")) read.csv("data/weightings.csv") else exampleWeights
-  lists <- if (file.exists("data/listings.csv")) { 
-    read.csv("data/listings.csv", row.names = 1) 
+  weights <- if (file.exists(weightings.path)) read.csv(weightings.path) else exampleWeights
+  lists <- if (file.exists(listings.path)) { 
+    read.csv(listings.path, row.names = 1) 
   } else 
     data.frame()
   
   list(listings = lists, weightings = weights,  engines = allEngines)
 }
 
-commitListings <- function(listings, jobData) {  
-  newListings <- do.call(rbind, listings)
-  jobData$listings <- merge(jobData$listings, jobData$listings, all = TRUE)
+commitListings <- function(listings, jobData) {    
+  jobData$listings <- merge(jobData$listings, listings, all = TRUE)
 
   # Remove old and duplicate listings
   jobData$listings <- jobData$listings[(Sys.Date() - jobData$listings$datePosted) <= 28, ]
   jobData$listings <- jobData$listings[!duplicated(jobData$listings[c("description", "location")]), ]
   
-  write.csv(jobData$listings, "data/listings.csv")    
+  write.csv(jobData$listings, listings.path)    
   
   jobData
 }
@@ -90,6 +94,9 @@ createUpdateFunc <- function(engineCount) {
   buffer <- NULL
   
   function() {
+    if (!isOpen(updateConn))
+      return(list(stats = stats, finished = TRUE, listings = listings, newListings = NULL))
+    
     update <- readLines(updateConn)
     finished <- FALSE
     newListings <- NULL
@@ -171,7 +178,10 @@ loadAllListings <- function (fullUpdate = FALSE, commit = TRUE, parallel = TRUE,
   } else {
     newListings <- lapply(jobData$engines, doCompleteSearch, jobData, fullUpdate, progressCallback)
   }
-  jobData <- commitListings(newListings, jobData)
+  
+  newListings <- do.call(rbind, newListings)  
+  if (commit)
+    jobData <- commitListings(newListings, jobData)
   
   jobData$listings
 }
@@ -196,12 +206,19 @@ initJobSearch <- function(engine, jobData, fullUpdate = FALSE) {
   
   jobsearch <- within(jobsearch, {
     state <- list(page = engine$indexBase, done = FALSE)
-    currentListings <- jobData$listings[jobData$listings$website ==  engine$name, ]
-    lasturl <- 
-      if (!fullUpdate && length(currentListings) > 0)  
-        currentListings[[1, "url"]] 
-      else 
-        ""
+    
+    if (!is.null(jobData$listings)) {
+      currentListings <- jobData$listings[jobData$listings$website ==  engine$name, ]
+      
+      lasturl <- 
+        if (!fullUpdate && nrow(currentListings) > 0)  
+          currentListings[[1, "url"]] 
+        else 
+          ""
+    } else {
+      currentListings <- NULL
+      lasturl <- ""
+    }
   })
   
   jobsearch
@@ -304,45 +321,27 @@ reweightListings <- function(jobData) {
   listings
 }
 
+savedJobs.path <- paste0(base.dir, "savedJobs")
 changeSavedJobs <- function(change) {
-  if (file.exists("data/savedjobs"))
-    load("data/savedjobs")
+  if (file.exists(savedJobs.path))
+    load(savedJobs.path)
+  else
+    savedJobs <- NULL
 
   savedJobs <- change(savedJobs)
-  save(savedJobs, file = "data/savedjobs")
+  save(savedJobs, file = savedJobs.path)
   savedJobs
 }
 
 saveJob <- function(url) {
   if (url != "") 
-    changeSavedJobs(function(savedJobs) { if (!is.null(savedJobs)) c(savedJobs, url) else c(url) })
+    changeSavedJobs(function(savedJobs) { c(savedJobs, url) })
 }
 
 deleteJob <- function(url) {
   if (url != "")
-    changeSavedJobs(function(savedJobs) { if (!is.null(savedJobs)) savedJobs[savedJobs != url] else c() })
+    changeSavedJobs(function(savedJobs) { savedJobs[savedJobs != url] })
 }
 
 getSavedJobs <- function() changeSavedJobs(function(savedJobs) {savedJobs})
-
-testFunc <- function() {
-  p <- mcparallel({loadAllListings(parallel = F)})
-  
-  repeat {
-    print(mccollect(p, wait = FALSE))
-
-    #if (!is.null(jobData)) break
-    
-    children <- parallel:::readChildren()
-    if (is.list(children)) {
-      for (data in children) {
-        browser()
-        #cat(sprintf("%d jobs found in %s", nrow()))
-      }
-    }
-  }
-  
-  print(jobData)
-}
-
 

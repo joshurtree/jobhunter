@@ -74,23 +74,27 @@ shinyServer(function(input, output, session) {
   output$random <- renderDataTable({listings()[values(), ]}, shortTableOptions, escape = FALSE)
   
   #Loading new jobs
-  observeEvent(input$search, {    
+  startLoadJobsObs <- observeEvent(input$search, {    
       progress <- shiny::Progress$new()
       listingsLoader <- createLALProcess(parallel = F)
+      
       updateProgress <- reactiveTimer(1000, session)
-      observe({
-        time <- updateProgress()
+      newJobObs <- observe({        
+        updateProgress()
         update <- listingsLoader$update()        
 
         if (update$finished) {          
           progress$close()
-          jobData$listings <<-mccollect(listingsLoader$process)
-          updateProgress <<- function() {time}
+          jobData$listings <<-mccollect(listingsLoader$process)[[1]]
+          newJobObs$destroy()
+          startLoadJobsObs$resume()
         } else {
           progress$set(update$stats$progress, sprintf("%d new jobs found", update$stats$jobCount))
           jobData$listings <<- rbind(jobData$listings, update$newListings)
         }              
       })
+  
+      startLoadJobsObs$suspend()
   })
   
   #Adjust weightings

@@ -11,3 +11,10 @@
 # produced vignettes
 vignettes/*.html
 vignettes/*.pdf
+
+data/
+jobsearch.Rmd
+jobsearch.html
+.RData
+rsconnct/
+
