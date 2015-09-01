@@ -252,11 +252,9 @@ loadListings <- function(jobsearch) {
         print(paste0("Update truncated: ", engine$name))
         finished <<- TRUE            
       }
-      
-      weight <- if (!finished) 
-        calcListingWeighting(listing, engine[["nfactor"]], jobsearch$weightings) 
-      else 
-        -100
+      if (finished)
+        return(NULL)
+      weight <- calcListingWeighting(listing, engine[["nfactor"]], jobsearch$weightings) 
       return(c(listing, weighting=weight, website=engine[["name"]], 
                Job = HTML(sprintf("<a href='%s'>%s</a>", listing[["url"]], trim(listing[["title"]]))),
                Date = outputDate(listing[["datePosted"]]),
@@ -264,17 +262,17 @@ loadListings <- function(jobsearch) {
                Favourites = createSaveLinks(listing[["url"]])
       ))            
     } else {
-      return(list(weighting=-100))
+      return(NULL)
     }
   })
   
   if (length(pageListings) != 0) {
-    pageListings <- do.call(rbind.data.frame, 
-                            pageListings[sapply(pageListings, function(listing) { listing$weighting > 0})])
+    pageListings <- do.call(rbind.data.frame, pageListings)
+                            #pageListings[sapply(pageListings, function(listing) { listing$weighting > 0})])
     #Remove duplicate listings
     pageListings <- pageListings[!(pageListings$url %in% jobsearch$listings$url) | 
                                  !(pageListings$url %in% jobsearch$currentListings$url), ]
-    pageListings <- pageListings[pageListings$weighting > 0, ]
+    #pageListings <- pageListings[pageListings$weighting > 0, ]
   } else {
     finished <- TRUE
     pageListings <- NULL
@@ -284,6 +282,7 @@ loadListings <- function(jobsearch) {
   
   jobsearch$state$page <- jobsearch$state$page + 1
   jobsearch$state$done <- finished | jobsearch$state$page >= 200
+  
   jobsearch$listings <-  if (is.null(jobsearch$listings)) 
                            pageListings
                          else 
@@ -302,6 +301,11 @@ loadListings <- function(jobsearch) {
   jobsearch
 }
 
+# Test function for new engines to check that they are functioning to requirements
+testEngine <- function(name) {
+  jobsearch <- initJobSearch(allEngines[sapply(allEngines, function(engine) {engine$name == name})][[1]], loadJobData())
+  head(loadListings(jobsearch)$listings)
+}
 
 commitReweightedListings <- function() {
   jobData <- loadJobData()

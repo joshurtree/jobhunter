@@ -117,7 +117,7 @@ IndeedEngine <- createEngine("Indeed",
     description = processField(entry, "/div/table/tr/td/div/span/text()"),
     datePosted = processDate(processField(entry, "/div/table/tr/td/div/div/span[@class='date']/text()"))
     )
-})
+}, 0)
 
 TotalEngine <- createEngine("TotalJobs",
                     "http://www.totaljobs.com/JobSearch/Results.aspx?PageNum=%d",
