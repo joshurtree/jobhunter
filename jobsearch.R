@@ -56,14 +56,15 @@ loadJobData <- function() {
   list(listings = lists, weightings = weights,  engines = allEngines)
 }
 
-commitListings <- function(listings, jobData) {    
-  jobData$listings <- merge(jobData$listings, listings, all = TRUE)
+commitListings <- function(jobData, listings = NULL, test = FALSE) { 
+  jobData$listings <- rbind(jobData$listings, listings)
 
   # Remove old and duplicate listings
   jobData$listings <- jobData$listings[(Sys.Date() - jobData$listings$datePosted) <= 28, ]
   jobData$listings <- jobData$listings[!duplicated(jobData$listings[c("description", "location")]), ]
   
-  write.csv(jobData$listings, listings.path)    
+  if (!test)
+    write.csv(jobData$listings, listings.path)    
   
   jobData
 }
@@ -181,7 +182,7 @@ loadAllListings <- function (fullUpdate = FALSE, commit = TRUE, parallel = TRUE,
   
   newListings <- do.call(rbind, newListings)  
   if (commit)
-    jobData <- commitListings(newListings, jobData)
+    jobData <- commitListings(jobData, newListings)
   
   jobData$listings
 }
@@ -236,13 +237,19 @@ loadListings <- function(jobsearch) {
   pageListings = data.frame()
   finished <- FALSE
   doc <- NULL
-  
+  attempts <- 0
   repeat {
     try({
       doc <- htmlParse(sprintf(engine$url, jobsearch$state$page), error =
                          function(msg, code, domain, line, col, level, filename, class, immediate) {})
       break
     })
+    attempts <- attempts + 1
+    
+    if (attempts > 5) {
+      jobsearch$state$done <- TRUE
+      return(jobsearch)
+    }
   }
   
   pageListings <- xpathApply(doc, engine[["xpath"]], function(entry) {
@@ -250,13 +257,11 @@ loadListings <- function(jobsearch) {
       listing <- engine$parser(xmlDoc(entry))
       if (!jobsearch$fullUpdate & listing[["url"]] == jobsearch$lasturl) {
         print(paste0("Update truncated: ", engine$name))
-        finished <<- TRUE            
+        finished <<- TRUE   
+        return(NULL)
       }
       
-      weight <- if (!finished) 
-        calcListingWeighting(listing, engine[["nfactor"]], jobsearch$weightings) 
-      else 
-        -100
+      weight <- calcListingWeighting(listing, engine[["nfactor"]], jobsearch$weightings) 
       return(c(listing, weighting=weight, website=engine[["name"]], 
                Job = HTML(sprintf("<a href='%s'>%s</a>", listing[["url"]], trim(listing[["title"]]))),
                Date = outputDate(listing[["datePosted"]]),
@@ -264,13 +269,17 @@ loadListings <- function(jobsearch) {
                Favourites = createSaveLinks(listing[["url"]])
       ))            
     } else {
-      return(list(weighting=-100))
+      return(NULL)
     }
   })
+
+  if (length(pageListings) == 0) 
+    pageListings <- data.frame()
+  else
+    pageListings <- do.call(rbind.data.frame, pageListings) 
+                            #pageListings[sapply(pageListings, function(listing) { listing$weighting > 0})])
   
-  if (length(pageListings) != 0) {
-    pageListings <- do.call(rbind.data.frame, 
-                            pageListings[sapply(pageListings, function(listing) { listing$weighting > 0})])
+  if (nrow(pageListings) != 0) {
     #Remove duplicate listings
     pageListings <- pageListings[!(pageListings$url %in% jobsearch$listings$url) | 
                                  !(pageListings$url %in% jobsearch$currentListings$url), ]
@@ -302,11 +311,22 @@ loadListings <- function(jobsearch) {
   jobsearch
 }
 
+# Test function for new engines to check that they are functioning to requirements 
+testEngine <- function(name, pages = 1) {   
+  jobData <- loadJobData()
+  
+  jobsearch <- initJobSearch(allEngines[sapply(allEngines, function(engine) {engine$name == name})][[1]], 
+                             jobData)   
+  for (i in seq(1:pages)) 
+    jobsearch <- loadListings(jobsearch)
+  jobData <- commitListings(jobData, jobsearch$listings, TRUE)
+  head(jobData$listings)
+}
 
 commitReweightedListings <- function() {
   jobData <- loadJobData()
   jobData$listings <- reweightListings(jobData)
-  commitJobData(jobData)
+  commitListings(jobData)
 }
 
 reweightListings <- function(jobData) {

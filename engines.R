@@ -18,8 +18,8 @@ processDate <- function(value) {
 
 processField <- function(entry, xpath, index = 1, default = "") {
   values <- xpathSApply(entry, xpath)
-
-  if (length(values) != 0)
+    
+  if (length(values) >= index)
     trim(xmlValue(values[[index]]))
   else
     default
@@ -63,7 +63,7 @@ MonsterEngine <- createEngine("Monster",
   list( 
     url = xpathSApply(entry, "substring-before(/tr/td/div/div/a/@href, '?')")[[1]],
     title = processAttribute(entry, "/tr/td/div/div/a/@title"),
-    location = processAttribute(entry, "/tr/td/div/div/a/@title", 2),
+    location = processField(entry, "/tr/td/div/div/a/text()", 2),
     salary = "Unknown",
     employer = processAttribute(entry, "/tr/td/div/div/div/a/@title"),
     description = "",
