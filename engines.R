@@ -1,6 +1,7 @@
 
 processDate <- function(value) {
-  if (is.null(value) | value == "" | is.na(value) | length(grep("[Tt]oday|minutes ago|hours ago", value) != 0))
+  if (is.null(value) | value == "" | is.na(value) | 
+      length(grep("(?i)today|minutes ago|hours ago|just posted", value) != 0))
     date <- Sys.Date()
   else if (length(grep("[yY]esterday", value)) != 0)
     date <- as.Date(-1, Sys.Date()) 
@@ -8,11 +9,11 @@ processDate <- function(value) {
     date <- as.Date(Sys.time() - as.integer(strsplit(value, " ")[[1]][[1]]))
   else if (length(grep("days? ago", value, ignore.case=TRUE)) != 0) 
     date <- as.Date(as.integer(strsplit(paste0("-", value), " ")[[1]][[1]]), Sys.Date())
-  else
-    date <- as.Date(as.Date(paste(value, format(Sys.Date, "%Y")), "%d %B %Y"))
-  
-  if (is.na(date))
-    browser()
+  else {
+    cat(sprintf("Unknown date '%s' encountered", value))
+    date < Sys.Date()
+  }
+
   date
 }
 

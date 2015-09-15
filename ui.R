@@ -1,10 +1,16 @@
 library(shiny)
 
+searchLink <- if (.Platform$OS.type == "windows") { 
+    tags$a(onClick = "alert('Function not available in Windows')", "Find new jobs")
+  } else {
+    actionLink("search", "Find new jobs")
+  }
+
 shinyUI(fluidPage(titlePanel("Job Hunter"),
   tags$script(paste0("function saveJob(url) { Shiny.onInputChange('savejob', url) };",
                      "function deleteJob(url) { Shiny.onInputChange('deletejob', url) }")),
     sidebarLayout(sidebarPanel(fluidPage(
-       fluidRow(actionLink("search", "Find new jobs")),
+       fluidRow(searchLink),
        tags$br(),
        conditionalPanel(condition = "input.main == 'recent'", 
                         fluidRow(selectInput("recentDays", 

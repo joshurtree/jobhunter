@@ -2,12 +2,16 @@
 library(XML)
 library(shiny)
 library(parallel)
+
+
 options(stringsAsFactors = FALSE)
 source("engines.R")
 
+
+
 #example set of weights to use if weights have not yet been set up
 exampleWeights <- data.frame(
-  keyword = c("IT", "(?i)Programming", "(?i)comput[er|ing]"),
+  keyword = c("IT", "(?i)programming", "(?i)comput[er|ing]"),
   tweight = c(10, 20, 4),
   dweight = c(5, 10, 0)
 )
@@ -41,9 +45,9 @@ createSaveLinks <- function(url) {
 }
 
 base.dir <- "~/.jobhunter/"
-if (!dir.exists(base.dir)) dir.create(base.dir)
 weightings.path <- paste0(base.dir, "weightings.csv")
 listings.path <- paste0(base.dir, "listings.csv")
+if (!dir.exists(base.dir)) dir.create(base.dir)
 
 # Load information on engines, weights and job listings
 loadJobData <- function() {
@@ -173,7 +177,7 @@ loadAllListings <- function (fullUpdate = FALSE, commit = TRUE, parallel = TRUE,
                              progressCallback = function(jobsearch) {}) {
   jobData <- loadJobData()
   
-  if (parallel) {    
+  if (parallel & .Platform$OS.type == "unix") {    
     newListings <- mclapply(jobData$engines, doCompleteSearch, jobData, fullUpdate, progressCallback)
   } else {
     newListings <- lapply(jobData$engines, doCompleteSearch, jobData, fullUpdate, progressCallback)
