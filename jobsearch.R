@@ -1,86 +1,32 @@
-#setwd(dirname(parent.frame(2)$ofile))
 library(XML)
-library(shiny)
 library(parallel)
+
 options(stringsAsFactors = FALSE)
 source("engines.R")
-
-#example set of weights to use if weights have not yet been set up
-exampleWeights <- data.frame(
-  keyword = c("IT", "(?i)Programming", "(?i)comput[er|ing]"),
-  tweight = c(10, 20, 4),
-  dweight = c(5, 10, 0)
-)
+source("defaults.R")
 
 # remove whitespace from both ends of a string
 trim <- function(value) {
   gsub("^\\s*|\\s*$", "", value)
 }
 
-# Output date in the format "10 January"
-outputDate <- function(date) {
-  format(as.Date(as.integer(date), as.Date("1970-1-1")), "%d %b")
-}
-
-createJobLink <- function(url, save) {
-  label <- if (save) "Save" else "Delete"
-  funcCall <- sprintf(
-    if (save) 
-      "saveJob('%s'); %s; nextSibling.style.display = 'initial'" 
-    else 
-      "deleteJob('%s'); %s; previousSibling.style.display = 'initial'", 
-    url, "this.style.display = 'none'")
-  style <- if (save != (url %in% getSavedJobs())) "" else "style='display : none'"
-  
-  sprintf("<a onClick=\"%s\" %s>%s</a>", 
-          funcCall, style, label)
-}
-
-createSaveLinks <- function(url) {
-  HTML(paste0(createJobLink(url, TRUE), createJobLink(url, FALSE)))
-}
-
-base.dir <- "~/.jobhunter/"
-if (!dir.exists(base.dir)) dir.create(base.dir)
-weightings.path <- paste0(base.dir, "weightings.csv")
-listings.path <- paste0(base.dir, "listings.csv")
-
 # Load information on engines, weights and job listings
-loadJobData <- function() {
-  weights <- if (file.exists(weightings.path)) read.csv(weightings.path) else exampleWeights
-  lists <- if (file.exists(listings.path)) { 
+read.listings <- function(path = listings.path) {
+  if (file.exists(listings.path)) { 
     read.csv(listings.path, row.names = 1) 
   } else 
-    data.frame()
-  
-  list(listings = lists, weightings = weights,  engines = allEngines)
+    data.frame()  
 }
 
-commitListings <- function(jobData, listings = NULL, test = FALSE) { 
-  jobData$listings <- rbind(jobData$listings, listings)
-
+write.listings <- function(listings, path = listings.path, test = FALSE) {
   # Remove old and duplicate listings
-  jobData$listings <- jobData$listings[(Sys.Date() - jobData$listings$datePosted) <= 28, ]
-  jobData$listings <- jobData$listings[!duplicated(jobData$listings[c("description", "location")]), ]
+  listings <- listings[(Sys.Date() - listings$datePosted) <= 28, ]
+  listings <- listings[!duplicated(listings[c("description", "location")]), ]
   
   if (!test)
-    write.csv(jobData$listings, listings.path)    
+    write.csv(listings, path)
   
-  jobData
-}
-
-calcListingWeighting <- function(listing, nfactor, weightings) {  
-  weighting = 0
-  
-  for (row in seq(1, nrow(weightings))) {
-    if (length(grep(weightings[[row, "keyword"]], listing[["title"]], ignore.case=TRUE))) {
-      weighting = weighting + weightings[[row, "tweight"]]
-    } else if (length(grep(weightings[row, "keyword"], listing[["description"]], ignore.case=TRUE))) {
-      weighting = weighting + weightings[[row, "dweight"]]
-    }
-  }  
-  
-  weighting*nfactor
+  listings
 }
 
 progressCalc <- function(pageCount, websitesCompleted, totalWebsites) {
@@ -160,8 +106,9 @@ createLALProcess <- function(fullUpdate = FALSE, commit = TRUE, parallel = TRUE)
   p <- mcparallel({
     serverConn <- socketConnection(port = 12345, server = TRUE)
     on.exit(close(serverConn))
-    loadAllListings(fullUpdate, commit, parallel,                
+    parseAllListings(fullUpdate, commit, parallel,                
                     function(jobupdate) {
+
                       writeLines(deparse(jobupdate), serverConn)
                       writeLines(paste0(rep("=", 5), collapse=""), serverConn)           
                     })
@@ -170,29 +117,34 @@ createLALProcess <- function(fullUpdate = FALSE, commit = TRUE, parallel = TRUE)
   list(process = p, update = createUpdateFunc(length(allEngines)), updateCount = 0)
 }
 
-loadAllListings <- function (fullUpdate = FALSE, commit = TRUE, parallel = TRUE, 
-                             progressCallback = function(jobsearch) {}) {
-  jobData <- loadJobData()
-  
-  if (parallel) {    
-    newListings <- mclapply(jobData$engines, doCompleteSearch, jobData, fullUpdate, progressCallback)
-  } else {
-    newListings <- lapply(jobData$engines, doCompleteSearch, jobData, fullUpdate, progressCallback)
-  }
-  
-  newListings <- do.call(rbind, newListings)  
-  if (commit)
-    jobData <- commitListings(jobData, newListings)
-  
-  jobData$listings
+load.engines <- function() {
+  allEngines
 }
 
-doCompleteSearch <- function(engine, jobData, fullUpdate = FALSE, 
+parseAllListings <- function (fullUpdate = FALSE, commit = TRUE, parallel = TRUE, 
                              progressCallback = function(jobsearch) {}) {
-  jobsearch <- initJobSearch(engine, jobData, fullUpdate)
+  listings <- read.listings()
+  
+  if (parallel & .Platform$OS.type == "unix") {    
+    newListings <- mclapply(load.engines(), doCompleteSearch, listings, fullUpdate, progressCallback)
+  } else {
+    newListings <- lapply(load.engines(), doCompleteSearch, listings, fullUpdate, progressCallback)
+  }
+
+  newListings <- do.call(rbind, newListings)
+  listings <- rbind(listings, newListings)
+  if (commit)
+    listings <- write.listings(listings)
+  
+  listings
+}
+
+doCompleteSearch <- function(engine, listings, fullUpdate = FALSE, 
+                             progressCallback = function(jobsearch) {}) {
+  jobsearch <- initJobSearch(engine, listings, fullUpdate)
 
   while(!jobsearch$state$done) {
-    jobsearch <- loadListings(jobsearch)
+    jobsearch <- parseListings(jobsearch)
     progressCallback(list(state = jobsearch$state, newListings = jobsearch$newListings))
   }
   
@@ -200,16 +152,16 @@ doCompleteSearch <- function(engine, jobData, fullUpdate = FALSE,
   jobsearch$listings
 }
 
-initJobSearch <- function(engine, jobData, fullUpdate = FALSE) {
+initJobSearch <- function(engine, listings, fullUpdate = FALSE) {
   #jobCount = if (is.null(jobData$listings)) 0 else nrow(jobData$listings)
-  jobsearch <- list(data = jobData, engine = engine, fullUpdate = fullUpdate, 
-                    page = engine$indexBase, weightings = jobData$weightings)  
+  jobsearch <- list(engine = engine, fullUpdate = fullUpdate, page = engine$indexBase)  
   
   jobsearch <- within(jobsearch, {
     state <- list(page = engine$indexBase, done = FALSE)
     
-    if (!is.null(jobData$listings)) {
-      currentListings <- jobData$listings[jobData$listings$website ==  engine$name, ]
+    if (!is.null(listings)) {
+      currentListings <- listings[listings$website ==  engine$name, ]
+      fullUpdate = TRUE
       
       lasturl <- 
         if (!fullUpdate && nrow(currentListings) > 0)  
@@ -229,14 +181,18 @@ initJobSearch <- function(engine, jobData, fullUpdate = FALSE) {
 # filter - specifies which job sites to use. NULL means use all of them
 # fullUpdate - when set to FALSE it only adds new jobs
 # commit - when set to TRUE commits results to listings.csv
-loadListings <- function(jobsearch) {
-  if (jobsearch$state$done)
+parseListings <- function(jobsearch) {
+  if (jobsearch$state$done) {
+    #browser()
     return(jobsearch)
+  }
 
   engine <- jobsearch$engine  
   pageListings = data.frame()
   finished <- FALSE
   doc <- NULL
+  
+  # Attempt to retrive page five times then abort search
   attempts <- 0
   repeat {
     try({
@@ -255,44 +211,40 @@ loadListings <- function(jobsearch) {
   pageListings <- xpathApply(doc, engine[["xpath"]], function(entry) {
     if (!finished) {
       listing <- engine$parser(xmlDoc(entry))
-      if (!jobsearch$fullUpdate & listing[["url"]] == jobsearch$lasturl) {
-        print(paste0("Update truncated: ", engine$name))
-        finished <<- TRUE   
-        return(NULL)
+      if (!jobsearch$fullUpdate) {
+        #browser()
+        if (listing[["url"]] == jobsearch$lasturl) {
+          print(paste0("Update truncated: ", engine$name))
+          finished <<- TRUE   
+          return(NULL)
+        }
       }
       
-      weight <- calcListingWeighting(listing, engine[["nfactor"]], jobsearch$weightings) 
-      return(c(listing, weighting=weight, website=engine[["name"]], 
-               Job = HTML(sprintf("<a href='%s'>%s</a>", listing[["url"]], trim(listing[["title"]]))),
-               Date = outputDate(listing[["datePosted"]]),
-               Location = trim(listing[["location"]]),    
-               Favourites = createSaveLinks(listing[["url"]])
-      ))            
+      #weight <- calcListingWeighting(listing, engine[["nfactor"]], jobsearch$weightings) 
+      listing[["website"]] <- engine[["name"]]
+      return(listing)            
     } else {
       return(NULL)
     }
   })
 
-  if (length(pageListings) == 0) 
-    pageListings <- data.frame()
-  else
-    pageListings <- do.call(rbind.data.frame, pageListings) 
-                            #pageListings[sapply(pageListings, function(listing) { listing$weighting > 0})])
+  pageListings <- do.call(rbind.data.frame, pageListings)
   
   if (nrow(pageListings) != 0) {
     #Remove duplicate listings
-    pageListings <- pageListings[!(pageListings$url %in% jobsearch$listings$url) | 
-                                 !(pageListings$url %in% jobsearch$currentListings$url), ]
-    pageListings <- pageListings[pageListings$weighting > 0, ]
-  } else {
-    finished <- TRUE
-    pageListings <- NULL
+    pageListings <- pageListings[!(pageListings$url %in% jobsearch$listings$url), ]
+    pageListings <- pageListings[!(pageListings$url %in% jobsearch$currentListings$url), ]
   }
+  
+  # terminate if website is returning sponsered jobs only
+  if (nrow(pageListings) == 0) 
+    finished <- TRUE
    
   #print(sprintf("Page results: %d, Total Results: %d", nrow(pageListings), nrow(listings)))
   
   jobsearch$state$page <- jobsearch$state$page + 1
   jobsearch$state$done <- finished | jobsearch$state$page >= 200
+  
   jobsearch$listings <-  if (is.null(jobsearch$listings)) 
                            pageListings
                          else 
@@ -313,55 +265,10 @@ loadListings <- function(jobsearch) {
 
 # Test function for new engines to check that they are functioning to requirements 
 testEngine <- function(name, pages = 1) {   
-  jobData <- loadJobData()
-  
   jobsearch <- initJobSearch(allEngines[sapply(allEngines, function(engine) {engine$name == name})][[1]], 
-                             jobData)   
+                             read.listings())   
   for (i in seq(1:pages)) 
-    jobsearch <- loadListings(jobsearch)
-  jobData <- commitListings(jobData, jobsearch$listings, TRUE)
-  head(jobData$listings)
+    jobsearch <- parseListings(jobsearch)
+  listings <- write.listings(jobsearch$listings, test.listings.path)
+  head(listings)
 }
-
-commitReweightedListings <- function() {
-  jobData <- loadJobData()
-  jobData$listings <- reweightListings(jobData)
-  commitListings(jobData)
-}
-
-reweightListings <- function(jobData) {
-  listings <- jobData$listings
-  for (i in seq(1, nrow(jobData$listings))) {
-    nfactor <- jobData$engines[sapply(jobData[['engines']], 
-                                      function(engine) 
-                                        engine$name == listings[[i, 'website']])][[1]]$nfactor
-    listings[[i, "weighting"]] <- calcListingWeighting(listings[i, ], nfactor, jobData$weightings)
-  }
-
-  listings
-}
-
-savedJobs.path <- paste0(base.dir, "savedJobs")
-changeSavedJobs <- function(change) {
-  if (file.exists(savedJobs.path))
-    load(savedJobs.path)
-  else
-    savedJobs <- NULL
-
-  savedJobs <- change(savedJobs)
-  save(savedJobs, file = savedJobs.path)
-  savedJobs
-}
-
-saveJob <- function(url) {
-  if (url != "") 
-    changeSavedJobs(function(savedJobs) { c(savedJobs, url) })
-}
-
-deleteJob <- function(url) {
-  if (url != "")
-    changeSavedJobs(function(savedJobs) { savedJobs[savedJobs != url] })
-}
-
-getSavedJobs <- function() changeSavedJobs(function(savedJobs) {savedJobs})
-

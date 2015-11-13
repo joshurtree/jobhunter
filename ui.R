@@ -1,18 +1,25 @@
 library(shiny)
 
+searchLink <- if (.Platform$OS.type == "windows") { 
+    tags$a(onClick = "alert('Function not available in Windows')", "Find new jobs")
+  } else {
+    actionLink("search", "Find new jobs")
+  }
+
 shinyUI(fluidPage(titlePanel("Job Hunter"),
-  tags$script(paste0("function saveJob(url) { Shiny.onInputChange('savejob', url) };",
-                     "function deleteJob(url) { Shiny.onInputChange('deletejob', url) }")),
+    tags$script(src="script.js"),
+    tags$script(sprintf("savedUrls = '%s'", 
+                        paste(persistentVector(savedJobs.path)$get.values(), collapse=", "))),
     sidebarLayout(sidebarPanel(fluidPage(
-       fluidRow(actionLink("search", "Find new jobs")),
+       fluidRow(searchLink),
        tags$br(),
        conditionalPanel(condition = "input.main == 'recent'", 
                         fluidRow(selectInput("recentDays", 
                                 "Show jobs posted in the last (days):", 
                                 c(1, 2, 3, 4, 5, 7, 10, 14), 2))),
        conditionalPanel(condition = "input.main == 'weights'",
-                        fluidRow(actionLink("addWeight", "Add Keyword")), 
-                        fluidRow(actionLink("saveWeights", "Save"))),
+                        fluidRow(actionLink("addWeight", "Add keyword")), 
+                        fluidRow(actionLink("saveWeights", "Apply new weights"))),
        conditionalPanel(condition = "input.main == 'random'",
                         fluidRow(actionLink("newrandom", "Shuffle")))
     ), width = 3),

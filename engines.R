@@ -1,6 +1,7 @@
 
-processDate <- function(value) {
-  if (is.null(value) | value == "" | is.na(value) | length(grep("[Tt]oday|minutes ago|hours ago", value) != 0))
+processDate <- function(value, defaultDate = Sys.Date()) {
+  if (is.null(value) | value == "" | is.na(value) | 
+      length(grep("(?i)today|minutes ago|hours ago|just posted", value) != 0))
     date <- Sys.Date()
   else if (length(grep("[yY]esterday", value)) != 0)
     date <- as.Date(-1, Sys.Date()) 
@@ -8,11 +9,11 @@ processDate <- function(value) {
     date <- as.Date(Sys.time() - as.integer(strsplit(value, " ")[[1]][[1]]))
   else if (length(grep("days? ago", value, ignore.case=TRUE)) != 0) 
     date <- as.Date(as.integer(strsplit(paste0("-", value), " ")[[1]][[1]]), Sys.Date())
-  else
-    date <- as.Date(as.Date(paste(value, format(Sys.Date, "%Y")), "%d %B %Y"))
-  
-  if (is.na(date))
-    browser()
+  else {
+    cat(sprintf("Unknown date '%s' encountered\n", value))
+    date <- defaultDate
+  }
+
   date
 }
 
@@ -75,16 +76,16 @@ ReedEngine <- createEngine("Reed",
                    "http://www.reed.co.uk/jobs?sortby=DisplayDate&pageno=%d",
                    "//article[starts-with(@id, 'jobSection')]",
                    function(entry) {
-  details <- xpathSApply(entry, "/article/div/div/ul/li/text()")
-  list(
+  #details <- xpathSApply(entry, "/article/div/div/ul/li/text()")
+   list(
     url = paste0("http://www.reed.co.uk", 
                  xpathSApply(entry, "substring-before(/article/div/header/div/h3/a/@href, '#')")[[1]]),
     title = processField(entry, "/article/div/header/div/h3/a/text()"),
-    location = xmlValue(details[[2]]),
-    salary = xmlValue(details[[1]]),
+    location = processField(entry, "/article/div/div/ul[1]/li[2]/text()"),
+    salary = processField(entry, "/article/div/div/ul[1]/li[1]/text()"),
     employer = processField(entry, "/article/div/div/div/span/span/a/text()"),
     description = processField(entry, "/article/p/text()"),
-    datePosted = processDate(xmlValue(details[[3]]))
+    datePosted = processDate(processField(entry, "/article/div/div/ul[1]/li[3]/text()"))
   )
 })
 
@@ -117,7 +118,7 @@ IndeedEngine <- createEngine("Indeed",
     description = processField(entry, "/div/table/tr/td/div/span/text()"),
     datePosted = processDate(processField(entry, "/div/table/tr/td/div/div/span[@class='date']/text()"))
     )
-})
+}, 0)
 
 TotalEngine <- createEngine("TotalJobs",
                     "http://www.totaljobs.com/JobSearch/Results.aspx?PageNum=%d",
@@ -136,4 +137,4 @@ TotalEngine <- createEngine("TotalJobs",
   )
 })
 
-allEngines <- list(Fish4JobsEngine, MonsterEngine, GRBEngine, IndeedEngine, ReedEngine, TotalEngine)
+allEngines <- list(Fish4JobsEngine, MonsterEngine, GRBEngine, IndeedEngine, TotalEngine)
